@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import (
 	"net/http"
@@ -24,7 +24,7 @@ func TestContext(t *testing.T) {
 	l := New()
 	r, _ := http.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	c := NewContext(l)
+	c := newContext(l)
 
 	var varParams []Param
 
@@ -44,22 +44,17 @@ func TestContext(t *testing.T) {
 
 	c.params = varParams
 	c.store = storeMap
-	c.request = r
+	c.Request = r
 
 	//Request
-	NotEqual(t, c.Request(), nil)
+	NotEqual(t, c.Request, nil)
 
 	//Response
-	NotEqual(t, c.Response(), nil)
-
-	//Parameters by ID
-	bsonValue, ok := c.P(0)
-	Equal(t, true, ok)
-	Equal(t, "507f191e810c19729de860ea", bsonValue)
+	NotEqual(t, c.Response, nil)
 
 	//Paramter by name
-	bsonValue, ok = c.Param("userID")
-	Equal(t, true, ok)
+	bsonValue := c.Param("userID")
+	NotEqual(t, len(bsonValue), 0)
 	Equal(t, "507f191e810c19729de860ea", bsonValue)
 
 	//Store
@@ -89,16 +84,13 @@ func TestContext(t *testing.T) {
 	Equal(t, "-74.005941", vString[3])
 
 	// Reset
-	c.Reset(w, r)
+	c.reset(w, r)
 
 	//Request
-	NotEqual(t, c.Request(), nil)
+	NotEqual(t, c.Request, nil)
 
 	//Response
-	NotEqual(t, c.Response(), nil)
-
-	//Param
-	Equal(t, len(c.Params()), 0)
+	NotEqual(t, c.Response, nil)
 
 	//Set
 	Equal(t, c.store, nil)
@@ -109,4 +101,224 @@ func TestContext(t *testing.T) {
 	// Handlers
 	Equal(t, c.handlers, nil)
 
+}
+
+func TestQueryParams(t *testing.T) {
+	l := New()
+	l.Get("/home/:id", func(c *Context) {
+		c.Param("nonexistant")
+		c.Response.Write([]byte(c.Request.URL.RawQuery))
+	})
+
+	code, body := request(GET, "/home/13?test=true&test2=true", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "test=true&test2=true")
+}
+
+func TestNativeHandlersAndParseForm(t *testing.T) {
+
+	l := New()
+	l.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.Param("nonexistant")
+		c.Next()
+
+	})
+	l.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body := request(GET, "/users/13", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "")
+
+	l2 := New()
+	l2.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.ParseForm()
+		c.Next()
+
+	})
+	l2.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = request(GET, "/users/14", l2)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "14")
+
+	l3 := New()
+	l3.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		c.ParseForm()
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = request(GET, "/users/15", l3)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "15")
+
+	l4 := New()
+	l4.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.ParseForm()
+		c.Next()
+
+	})
+	l4.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		c.ParseForm()
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = request(GET, "/users/16", l4)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "16")
+
+	l5 := New()
+	l5.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		if err := c.ParseForm(); err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = request(GET, "/users/16?test=%2f%%efg", l5)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "invalid URL escape \"%%e\"")
+}
+
+func TestNativeHandlersAndParseMultiPartForm(t *testing.T) {
+
+	l := New()
+	l.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.Param("nonexistant")
+		c.Next()
+
+	})
+	l.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body := request(GET, "/users/13", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "")
+
+	l2 := New()
+	l2.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.ParseMultipartForm(10 << 5) // 5 MB
+		c.Next()
+	})
+	l2.Post("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = requestMultiPart(POST, "/users/14", l2)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "14")
+
+	l3 := New()
+	l3.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		c.ParseMultipartForm(10 << 5) // 5 MB
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = requestMultiPart(GET, "/users/15", l3)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "15")
+
+	l4 := New()
+	l4.Use(func(c *Context) {
+		// to trigger the form parsing
+		c.ParseMultipartForm(10 << 5) // 5 MB
+		c.Next()
+
+	})
+	l4.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		c.ParseMultipartForm(10 << 5) // 5 MB
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = requestMultiPart(GET, "/users/16", l4)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "16")
+
+	l5 := New()
+	l5.Get("/users/:id", func(w http.ResponseWriter, r *http.Request) {
+
+		c := GetContext(w)
+		if err := c.ParseMultipartForm(10 << 5); err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+
+		w.Write([]byte(r.FormValue("id")))
+	})
+
+	code, body = requestMultiPart(GET, "/users/16?test=%2f%%efg", l5)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "invalid URL escape \"%%e\"")
+}
+
+func TestClientIP(t *testing.T) {
+	l := New()
+	c := newContext(l)
+
+	c.Request, _ = http.NewRequest("POST", "/", nil)
+
+	c.Request.Header.Set("X-Real-IP", " 10.10.10.10  ")
+	c.Request.Header.Set("X-Forwarded-For", "  20.20.20.20, 30.30.30.30")
+	c.Request.RemoteAddr = "  40.40.40.40:42123 "
+
+	Equal(t, c.ClientIP(), "10.10.10.10")
+
+	c.Request.Header.Del("X-Real-IP")
+	Equal(t, c.ClientIP(), "20.20.20.20")
+
+	c.Request.Header.Set("X-Forwarded-For", "30.30.30.30  ")
+	Equal(t, c.ClientIP(), "30.30.30.30")
+
+	c.Request.Header.Del("X-Forwarded-For")
+	Equal(t, c.ClientIP(), "40.40.40.40")
+}
+
+func TestAcceptedLanguages(t *testing.T) {
+	l := New()
+	c := newContext(l)
+
+	c.Request, _ = http.NewRequest("POST", "/", nil)
+	c.Request.Header.Set(AcceptedLanguage, "da, en-gb;q=0.8, en;q=0.7")
+
+	languages := c.AcceptedLanguages()
+
+	Equal(t, languages[0], "da")
+	Equal(t, languages[1], "en-gb")
+	Equal(t, languages[2], "en")
+
+	c.Request.Header.Del(AcceptedLanguage)
+
+	languages = c.AcceptedLanguages()
+
+	Equal(t, languages, nil)
+
+	c.Request.Header.Set(AcceptedLanguage, "")
+	languages = c.AcceptedLanguages()
+
+	Equal(t, languages, nil)
 }

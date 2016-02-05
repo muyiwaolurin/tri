@@ -1,14 +1,29 @@
-LCARS
-===========
-![Project status](http://img.shields.io/status/experimental.png?color=red)
+##LARS
+<img align="right" src="https://raw.githubusercontent.com/go-playground/lars/master/examples/README/test.gif">
+![Project status](https://img.shields.io/badge/version-0.7.0-green.svg)
+[![Build Status](https://semaphoreci.com/api/v1/projects/4351aa2d-2f94-40be-a6ef-85c248490378/679708/badge.svg)](https://semaphoreci.com/joeybloggs/lars)
+[![Coverage Status](https://coveralls.io/repos/github/go-playground/lars/badge.svg?branch=master)](https://coveralls.io/github/go-playground/lars?branch=master)
+[![Go Report Card](http://goreportcard.com/badge/go-playground/lars)](http://goreportcard.com/badge/go-playground/lars)
+[![GoDoc](https://godoc.org/github.com/go-playground/lars?status.svg)](https://godoc.org/github.com/go-playground/lars)
 
-LCARS (Library Access Retrieval System), a fast radix-tree based, HTTP router for Go.
+LARS is a fast radix-tree based, zero allocation, HTTP router for Go.  [ view examples](https://github.com/go-playground/lars/tree/master/examples)
+
+Why Another HTTP Router?
+------------------------
+I have noticed that most routers out there, IMHO, are adding too much functionality that doesn't belong in an HTTP router, and they are turning into web frameworks, with all the bloat that entails. LARS aims to remain a simple yet powerful HTTP router that can be plugged into any existing framework; furthermore LARS allowing the passing of global + application variables that comply with it's IGlobals interface (right on the Context object) makes frameworks redundant as **LARS wraps the framework instead of the framework wrapping LARS** [see example here](https://github.com/go-playground/lars/blob/master/examples/all-in-one/main.go)
 
 Unique Features 
 --------------
-LCARS has the following features 
+* Context allows the passing of framework/globals/application specific variables via it's Globals field.
+  * The Globals object is essentially all of the application specific variables and libraries needed by your handlers and functions, keeping a clear separation between your http and application contexts.
+* Handles mutiple url patterns not supported by many other routers.
+  * the route algorithm was written from scratch and is **NOT** a modification of any other router.
+* Contains helpful logic to help prevent adding bad routes, keeping your url's consistent.
+  * i.e. /user/:id and /user/:user_id - the second one will fail to add letting you know that :user_id should be :id
+* Has an uber simple middleware + handler definitions!!! middleware and handlers actually have the exact same definition!
+* Full support for standard/native http Handler + HandlerFunc [see here](https://github.com/go-playground/lars/blob/master/examples/native/main.go)
 
-- 
+
 
 Installation
 -----------
@@ -16,26 +31,234 @@ Installation
 Use go get 
 
 ```go
-go get github.com/go-experimental/LCARS
+go get github.com/go-playground/lars
 ``` 
 
 or to update
 
 ```go
-go get -u github.com/go-experimental/LCARS
+go get -u github.com/go-playground/lars
 ``` 
 
-Then import LCARS package into your code.
+Then import lars package into your code.
 
 ```go
-import "github.com/go-experimental/LCARS"
+import "github.com/go-playground/lars"
 ``` 
-
-Getting Started
-----------------
 
 Usage
 ------
+Below is a full example, for a simpler example [see here](https://github.com/go-playground/lars/blob/master/examples/groups/main.go)
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/go-playground/lars"
+)
+
+// This is a contrived example using globals as I would use it in production
+// I would break things into separate files but all here for simplicity
+
+// ApplicationGlobals houses all the application info for use.
+type ApplicationGlobals struct {
+	// DB - some database connection
+	Log *log.Logger
+	// Translator - some i18n translator
+	// JSON - encoder/decoder
+	// Schema - gorilla schema
+	// .......
+}
+
+// Reset gets called just before a new HTTP request starts calling
+// middleware + handlers
+func (g *ApplicationGlobals) Reset(c *lars.Context) {
+	// DB = new database connection or reset....
+	//
+	// We don't touch translator + log as they don't change per request
+}
+
+// Done gets called after the HTTP request has completed right before
+// Context gets put back into the pool
+func (g *ApplicationGlobals) Done() {
+	// DB.Close()
+}
+
+var _ lars.IGlobals = &ApplicationGlobals{} // ensures ApplicationGlobals complies with lasr.IGlobals at compile time
+
+func main() {
+
+	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	// translator := ...
+	// db := ... base db connection or info
+	// json := ...
+	// schema := ...
+
+	globalsFn := func() lars.IGlobals {
+		return &ApplicationGlobals{
+			Log: logger,
+			// Translator: translator,
+			// DB: db,
+			// JSON: json,
+			// schema:schema,
+		}
+	}
+
+	l := lars.New()
+	l.RegisterGlobals(globalsFn)
+	l.Use(Logger)
+
+	l.Get("/", Home)
+
+	users := l.Group("/users")
+	users.Get("", Users)
+
+	// you can break it up however you with, just demonstrating that you can
+	// have groups of group
+	user := users.Group("/:id")
+	user.Get("", User)
+	user.Get("/profile", UserProfile)
+
+	http.ListenAndServe(":3007", l.Serve())
+}
+
+// Home ...
+func Home(c *lars.Context) {
+
+	app := c.Globals.(*ApplicationGlobals)
+
+	var username string
+
+	// username = app.DB.find(user by .....)
+
+	app.Log.Println("Found User")
+
+	c.Response.Write([]byte("Welcome Home " + username))
+}
+
+// Users ...
+func Users(c *lars.Context) {
+
+	app := c.Globals.(*ApplicationGlobals)
+
+	app.Log.Println("In Users Function")
+
+	c.Response.Write([]byte("Users"))
+}
+
+// User ...
+func User(c *lars.Context) {
+
+	app := c.Globals.(*ApplicationGlobals)
+
+	id := c.Param("id")
+
+	var username string
+
+	// username = app.DB.find(user by id.....)
+
+	app.Log.Println("Found User")
+
+	c.Response.Write([]byte("Welcome " + username + " with id " + id))
+}
+
+// UserProfile ...
+func UserProfile(c *lars.Context) {
+
+	app := c.Globals.(*ApplicationGlobals)
+
+	id := c.Param("id")
+
+	var profile string
+
+	// profile = app.DB.find(user profile by .....)
+
+	app.Log.Println("Found User Profile")
+
+	c.Response.Write([]byte("Here's your profile " + profile + " user " + id))
+}
+
+// Logger ...
+func Logger(c *lars.Context) {
+
+	start := time.Now()
+
+	c.Next()
+
+	stop := time.Now()
+	path := c.Request.URL.Path
+
+	if path == "" {
+		path = "/"
+	}
+
+	log.Printf("%s %d %s %s", c.Request.Method, c.Response.Status(), path, stop.Sub(start))
+}
+
+```
+
+Native Handler Support
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/go-playground/lars"
+)
+
+func main() {
+
+	l := lars.New()
+	l.Use(Logger)
+
+	l.Get("/", HelloWorld)
+
+	http.ListenAndServe(":3007", l.Serve())
+}
+
+// HelloWorld ...
+func HelloWorld(w http.ResponseWriter, r *http.Request) {
+
+	// lar's context! get it and ROCK ON!
+	ctx := lars.GetContext(w)
+
+	ctx.Response.Write([]byte("Hello World"))
+}
+
+// Logger ...
+func Logger(c *lars.Context) {
+
+	start := time.Now()
+
+	c.Next()
+
+	stop := time.Now()
+	path := c.Request.URL.Path
+
+	if path == "" {
+		path = "/"
+	}
+
+	log.Printf("%s %d %s %s", c.Request.Method, c.Response.Status(), path, stop.Sub(start))
+}
+```
+
+Middleware
+-----------
+There are some pre-defined middlewares within the middleware folder; NOTE: that the middleware inside will
+comply with the following rule(s):
+
+* Are completely reusable by the community without modification
+
+Other middleware will be listed under the examples/middleware/... folder for a quick copy/paste modify. as an example a logging or
+recovery middleware are very application dependent and therefore will be listed under the examples/middleware/...
 
 Benchmarks
 -----------
@@ -45,41 +268,41 @@ Run on MacBook Pro (Retina, 15-inch, Late 2013) 2.6 GHz Intel Core i7 16 GB 1600
 ```go
 go test -bench=. -benchmem=true
 #GithubAPI Routes: 203
-   lcars: 81016 Bytes
+   LARS: 85000 Bytes
 
 #GPlusAPI Routes: 13
-   lcars: 6904 Bytes
+   LARS: 7240 Bytes
 
 #ParseAPI Routes: 26
-   lcars: 7808 Bytes
+   LARS: 8160 Bytes
 
 #Static Routes: 157
-   lcars: 79240 Bytes
+   LARS: 81544 Bytes
 
 PASS
-BenchmarkLCARS_Param       	20000000	        87.4 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_Param5      	10000000	       144 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_Param20     	 5000000	       382 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_ParamWrite  	10000000	       168 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GithubStatic	20000000	       109 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GithubParam 	10000000	       151 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GithubAll   	   50000	     38100 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GPlusStatic 	20000000	        73.6 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GPlusParam  	20000000	       100 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GPlus2Params	10000000	       138 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_GPlusAll    	 1000000	      1838 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_ParseStatic 	20000000	        90.9 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_ParseParam  	20000000	       123 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_Parse2Params	10000000	       133 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_ParseAll    	  300000	      3902 ns/op	       0 B/op	       0 allocs/op
-BenchmarkLCARS_StaticAll   	   50000	     24861 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_Param       	20000000	        83.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_Param5      	10000000	       140 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_Param20     	 5000000	       363 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_ParamWrite  	10000000	       155 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GithubStatic	20000000	       102 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GithubParam 	10000000	       144 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GithubAll   	   50000	     36310 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GPlusStatic 	20000000	        66.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GPlusParam  	20000000	        94.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GPlus2Params	10000000	       134 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_GPlusAll    	 1000000	      1730 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_ParseStatic 	20000000	        85.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_ParseParam  	20000000	       102 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_Parse2Params	10000000	       120 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_ParseAll    	  500000	      3561 ns/op	       0 B/op	       0 allocs/op
+BenchmarkLARS_StaticAll   	  100000	     22997 ns/op	       0 B/op	       0 allocs/op
 
 ```
 
 This package is inspired by the following 
-- Dimfeld/httpTreeMux
-- julienschmidt/httprouter
-- labstack/echo
+- [httptreemux](https://github.com/dimfeld/httptreemux)
+- [httprouter](https://github.com/julienschmidt/httprouter)
+- [echo](https://github.com/labstack/echo)
 
 License 
 --------

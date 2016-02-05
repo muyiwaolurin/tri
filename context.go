@@ -1,7 +1,9 @@
-package lcars
+package lars
 
 import (
+	"net"
 	"net/http"
+	"strings"
 
 	"golang.org/x/net/context"
 )
@@ -25,83 +27,108 @@ type store map[string]interface{}
 // being the interface, which does not have a clear separation of http Context vs Globals
 type IGlobals interface {
 	Reset(*Context)
+	Done()
 }
 
 // Context encapsulates the http request, response context
 type Context struct {
 	context.Context
-	request  *http.Request
-	response *Response
-	params   Params
-	handlers HandlersChain
-	store    store
-	index    int
-	Globals  IGlobals
+	Request             *http.Request
+	Response            *Response
+	Globals             IGlobals
+	params              Params
+	handlers            HandlersChain
+	store               store
+	index               int
+	formParsed          bool
+	multipartFormParsed bool
 }
 
 var _ context.Context = &Context{}
 
-// NewContext returns a new default LCARS Context object.
-func NewContext(l *LCARS) *Context {
+// newContext returns a new default lars Context object.
+func newContext(l *LARS) *Context {
 
-	return &Context{
-		params:   make(Params, l.mostParams),
-		response: &Response{},
-		Globals:  l.newGlobals(),
-	}
-}
-
-// Request returns *http.Request of the given context
-func (c *Context) Request() *http.Request {
-	return c.request
-}
-
-// Response returns http.ResponseWriter of the given context
-func (c *Context) Response() *Response {
-	return c.response
-}
-
-// P returns path parameter by index.
-func (c *Context) P(i int) (string, bool) {
-
-	l := len(c.params)
-
-	if i < l {
-		return c.params[i].Value, true
+	c := &Context{
+		params:  make(Params, l.mostParams),
+		Globals: l.newGlobals(),
 	}
 
-	return blank, false
+	c.Response = newResponse(nil, c)
+
+	return c
 }
 
-// Param returns the value of the first Param which key matches the given name.
-// If no matching Param is found, an empty string is returned and false is returned.
-func (c *Context) Param(name string) (string, bool) {
-
-	for _, entry := range c.params {
-		if entry.Key == name {
-			return entry.Value, true
-		}
-	}
-	return blank, false
-}
-
-// Params returns the array of parameters within the*Context
-func (c *Context) Params() Params {
-	return c.params
-}
-
-// Reset resets the*Context to it's default request state
-func (c *Context) Reset(w http.ResponseWriter, r *http.Request) {
-	c.request = r
-	c.response.reset(w)
+// reset resets the Context to it's default request state
+func (c *Context) reset(w http.ResponseWriter, r *http.Request) {
+	c.Request = r
+	c.Response.reset(w)
 	c.params = c.params[0:0]
 	c.store = nil
 	c.index = -1
 	c.handlers = nil
+	c.formParsed = false
+	c.multipartFormParsed = false
+}
 
-	if c.Globals != nil {
-		c.Globals.Reset(c)
+// Param returns the value of the first Param which key matches the given name.
+// If no matching Param is found, an empty string is returned.
+func (c *Context) Param(name string) string {
+
+	for _, entry := range c.params {
+		if entry.Key == name {
+			return entry.Value
+		}
 	}
+
+	return blank
+}
+
+// ParseForm calls the underlying http.Request ParseForm
+// but also adds the URL params to the request Form as if
+// they were defined as query params i.e. ?id=13&ok=true but
+// does not add the params to the http.Request.URL.RawQuery
+// for SEO purposes
+func (c *Context) ParseForm() error {
+
+	if c.formParsed {
+		return nil
+	}
+
+	if err := c.Request.ParseForm(); err != nil {
+		return err
+	}
+
+	for _, entry := range c.params {
+		c.Request.Form[entry.Key] = []string{entry.Value}
+	}
+
+	c.formParsed = true
+
+	return nil
+}
+
+// ParseMultipartForm calls the underlying http.Request ParseMultipartForm
+// but also adds the URL params to the request Form as if they were defined
+// as query params i.e. ?id=13&ok=true but does not add the params to the
+// http.Request.URL.RawQuery for SEO purposes
+func (c *Context) ParseMultipartForm(maxMemory int64) error {
+
+	if c.multipartFormParsed {
+		return nil
+	}
+
+	if err := c.Request.ParseMultipartForm(maxMemory); err != nil {
+		return err
+	}
+
+	for _, entry := range c.params {
+		c.Request.Form[entry.Key] = []string{entry.Value}
+	}
+
+	c.multipartFormParsed = true
+
+	return nil
 }
 
 // Set is used to store a new key/value pair exclusivelly for this*Context.
@@ -128,4 +155,62 @@ func (c *Context) Get(key string) (value interface{}, exists bool) {
 func (c *Context) Next() {
 	c.index++
 	c.handlers[c.index](c)
+}
+
+// http request helpers
+
+// ClientIP implements a best effort algorithm to return the real client IP, it parses
+// X-Real-IP and X-Forwarded-For in order to work properly with reverse-proxies such us: nginx or haproxy.
+func (c *Context) ClientIP() (clientIP string) {
+
+	var values []string
+
+	if values, _ = c.Request.Header[XRealIP]; len(values) > 0 {
+
+		clientIP = strings.TrimSpace(values[0])
+		if clientIP != blank {
+			return
+		}
+	}
+
+	if values, _ = c.Request.Header[XForwardedFor]; len(values) > 0 {
+		clientIP = values[0]
+
+		if index := strings.IndexByte(clientIP, ','); index >= 0 {
+			clientIP = clientIP[0:index]
+		}
+
+		clientIP = strings.TrimSpace(clientIP)
+		if clientIP != blank {
+			return
+		}
+	}
+
+	clientIP, _, _ = net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))
+
+	return
+}
+
+// AcceptedLanguages returns an array of accepted languages denoted by
+// the Accept-Language header sent by the browser or nil if none
+// NOTE: this lowercases the locales as some stupid browsers send CamelCase
+func (c *Context) AcceptedLanguages() []string {
+
+	var accepted string
+
+	if accepted = c.Request.Header.Get(AcceptedLanguage); accepted == blank {
+		return nil
+	}
+
+	options := strings.Split(accepted, ",")
+	l := len(options)
+
+	language := make([]string, l)
+
+	for i := 0; i < l; i++ {
+		locale := strings.SplitN(options[i], ";", 2)
+		language[i] = strings.ToLower(strings.Trim(locale[0], " "))
+	}
+
+	return language
 }

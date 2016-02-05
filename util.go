@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import "net/http"
 
@@ -11,9 +11,8 @@ func wrapHandler(h Handler) HandlerFunc {
 		return h
 	case http.Handler, http.HandlerFunc:
 		return func(c *Context) {
-			res := c.Response()
 
-			if h.(http.Handler).ServeHTTP(res, c.Request()); res.status != http.StatusOK || res.committed {
+			if h.(http.Handler).ServeHTTP(c.Response, c.Request); c.Response.status != http.StatusOK || c.Response.committed {
 				return
 			}
 
@@ -23,9 +22,8 @@ func wrapHandler(h Handler) HandlerFunc {
 		}
 	case func(http.ResponseWriter, *http.Request):
 		return func(c *Context) {
-			res := c.Response()
 
-			if h(res, c.Request()); res.status != http.StatusOK || res.committed {
+			if h(c.Response, c.Request); c.Response.status != http.StatusOK || c.Response.committed {
 				return
 			}
 
@@ -36,4 +34,12 @@ func wrapHandler(h Handler) HandlerFunc {
 	default:
 		panic("unknown handler")
 	}
+}
+
+// GetContext is a helper method for retrieving the *Context object from
+// the ResponseWriter when using native go hanlders.
+// NOTE: this will panic if fed an http.ResponseWriter not provided by lars's
+// chaining.
+func GetContext(w http.ResponseWriter) *Context {
+	return w.(*Response).context
 }

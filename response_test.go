@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import (
 	"net/http"
@@ -23,7 +23,8 @@ func TestResponse(t *testing.T) {
 
 	l := New()
 	w := httptest.NewRecorder()
-	r := NewResponse(w, l)
+	c := newContext(l)
+	r := newResponse(w, c)
 
 	// SetWriter
 	r.SetWriter(w)
@@ -60,10 +61,10 @@ func TestResponse(t *testing.T) {
 	IsEqual(len(info), r.Size())
 
 	// WriteString
-	s := "LCARS"
+	s := "lars"
 	n, err := r.WriteString(s)
 	Equal(t, err, nil)
-	Equal(t, n, 5)
+	Equal(t, n, 4)
 
 	//committed
 	Equal(t, true, r.Committed())

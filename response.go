@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import (
 	"bufio"
@@ -17,11 +17,12 @@ type Response struct {
 	status    int
 	size      int64
 	committed bool
+	context   *Context
 }
 
-// NewResponse creates a new Response for testing purposes
-func NewResponse(w http.ResponseWriter, l *LCARS) *Response {
-	return &Response{ResponseWriter: w}
+// newResponse creates a new Response for testing purposes
+func newResponse(w http.ResponseWriter, context *Context) *Response {
+	return &Response{ResponseWriter: w, context: context}
 }
 
 // SetWriter sets the provided writer as the new *Response http.ResponseWriter
@@ -104,7 +105,7 @@ func (r *Response) Size() int64 {
 }
 
 // Committed returns whether the *Response header has already been written to
-// and if has been commited to this return.
+// and if has been committed to this return.
 func (r *Response) Committed() bool {
 	return r.committed
 }

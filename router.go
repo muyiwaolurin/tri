@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import (
 	"net/http"
@@ -9,14 +9,14 @@ import (
 // Router contains the tree information and
 // methods to traverse it
 type Router struct {
-	lcars *LCARS
-	tree  *node
+	lars *LARS
+	tree *node
 }
 
-// NewRouter return a router instance for use
-func NewRouter(l *LCARS) *Router {
+// newRouter return a router instance for use
+func newRouter(l *LARS) *Router {
 	return &Router{
-		lcars: l,
+		lars: l,
 		tree: &node{
 			static: nodes{},
 		},
@@ -30,15 +30,16 @@ func (r *Router) add(method string, path string, rg *routeGroup, h HandlersChain
 	cn := r.tree
 
 	var (
-		start  int
-		end    int
-		j      int
-		c      byte
-		en     *node
-		ok     bool
-		chunk  string
-		err    error
-		pCount uint8 = 1
+		start      int
+		end        int
+		j          int
+		c          byte
+		en         *node
+		ok         bool
+		chunk      string
+		err        error
+		pCount     uint8 = 1
+		paramSlash bool
 	)
 
 	if path, err = url.QueryUnescape(path); err != nil {
@@ -107,7 +108,12 @@ MAIN:
 
 					pCount++
 					cn = cn.params
-					start = end + 1 // may be wrong here might be + 2 or plus nothing
+					start = end + 1
+
+					if path[start:] == blank {
+						paramSlash = true
+						goto END
+					}
 
 					continue MAIN
 				}
@@ -126,7 +132,12 @@ MAIN:
 				cn.params = nn
 				pCount++
 				cn = nn
-				start = end + 1 // may be wrong here might be + 2 or plus nothing
+				start = end + 1
+
+				if path[start:] == blank {
+					paramSlash = true
+					goto END
+				}
 
 				continue MAIN
 			}
@@ -208,8 +219,13 @@ MAIN:
 
 END:
 
-	if pCount > r.lcars.mostParams {
-		r.lcars.mostParams = pCount
+	if pCount > r.lars.mostParams {
+		r.lars.mostParams = pCount
+	}
+
+	if paramSlash {
+		cn.addSlashChain(origPath, method, append(rg.middleware, h...))
+		return
 	}
 
 	cn.addChain(origPath, method, append(rg.middleware, h...))
@@ -219,9 +235,6 @@ END:
 // attempting redirect if specified to do so.
 func (r *Router) find(ctx *Context, processEnd bool) {
 
-	cn := r.tree
-	path := ctx.request.URL.Path[1:]
-
 	var (
 		start int
 		end   int
@@ -230,6 +243,9 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 		i     int
 		j     int
 	)
+
+	cn := r.tree
+	path := ctx.Request.URL.Path[1:]
 
 	// start parsing URL
 	for ; end < len(path); end++ {
@@ -243,7 +259,7 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 		if nn, ok = cn.static[path[start:j]]; ok {
 
 			if path[j:] == blank {
-				if ctx.handlers, ok = nn.chains[ctx.request.Method]; !ok {
+				if ctx.handlers, ok = nn.chains[ctx.Request.Method]; !ok {
 					goto PARAMS
 				}
 
@@ -263,7 +279,7 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 		if cn.params != nil {
 
 			if path[j:] == blank {
-				if ctx.handlers, ok = cn.params.chains[ctx.request.Method]; !ok {
+				if ctx.handlers, ok = cn.params.parmsSlashChains[ctx.Request.Method]; !ok {
 					goto WILD
 				}
 
@@ -290,7 +306,7 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 	WILD:
 		// no matching static or param chunk look at wild if available
 		if cn.wild != nil {
-			ctx.handlers = cn.wild.chains[ctx.request.Method]
+			ctx.handlers = cn.wild.chains[ctx.Request.Method]
 			cn = cn.wild
 			goto END
 		}
@@ -302,10 +318,10 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 
 	// no slash encountered, end of path...
 	if nn, ok = cn.static[path[start:]]; ok {
-		if ctx.handlers, ok = nn.chains[ctx.request.Method]; !ok {
+		if ctx.handlers, ok = nn.chains[ctx.Request.Method]; !ok {
 			goto PARAMSNOSLASH
 		}
-		// ctx.handlers = nn.chains[ctx.request.Method]
+		// ctx.handlers = nn.chains[ctx.Request.Method]
 		cn = nn
 
 		goto END
@@ -313,7 +329,7 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 
 PARAMSNOSLASH:
 	if cn.params != nil {
-		if ctx.handlers, ok = cn.params.chains[ctx.request.Method]; !ok {
+		if ctx.handlers, ok = cn.params.chains[ctx.Request.Method]; !ok {
 			goto WILDNOSLASH
 		}
 
@@ -329,37 +345,36 @@ PARAMSNOSLASH:
 WILDNOSLASH:
 	// no matching chunk nor param check if wild
 	if cn.wild != nil {
-		ctx.handlers = cn.wild.chains[ctx.request.Method]
+		ctx.handlers = cn.wild.chains[ctx.Request.Method]
 		cn = cn.wild
 
 		goto END
 	}
 
 	if path == blank {
-		ctx.handlers = cn.chains[ctx.request.Method]
+		ctx.handlers = cn.chains[ctx.Request.Method]
 	}
 
 	cn = nil
 
 END:
-	// fmt.Println("END:", ctx.handlers)
 	if ctx.handlers == nil && processEnd {
 		ctx.params = ctx.params[0:0]
 
-		if r.lcars.handleMethodNotAllowed && cn != nil && len(cn.chains) > 0 {
+		if r.lars.handleMethodNotAllowed && cn != nil && len(cn.chains) > 0 {
 			ctx.Set("methods", cn.chains)
-			ctx.handlers = r.lcars.http405
+			ctx.handlers = r.lars.http405
 			return
 		}
 
-		if r.lcars.redirectTrailingSlash {
+		if r.lars.redirectTrailingSlash {
 
 			// find again all lowercase
-			lc := strings.ToLower(ctx.request.URL.Path)
+			lc := strings.ToLower(ctx.Request.URL.Path)
 
-			if lc != ctx.request.URL.Path {
+			if lc != ctx.Request.URL.Path {
 
-				ctx.request.URL.Path = lc
+				ctx.Request.URL.Path = lc
 				r.find(ctx, false)
 
 				if ctx.handlers != nil {
@@ -370,10 +385,10 @@ END:
 
 			ctx.params = ctx.params[0:0]
 
-			if ctx.request.URL.Path[len(ctx.request.URL.Path)-1:] == basePath {
-				ctx.request.URL.Path = ctx.request.URL.Path[:len(ctx.request.URL.Path)-1]
+			if ctx.Request.URL.Path[len(ctx.Request.URL.Path)-1:] == basePath {
+				ctx.Request.URL.Path = ctx.Request.URL.Path[:len(ctx.Request.URL.Path)-1]
 			} else {
-				ctx.request.URL.Path = ctx.request.URL.Path + basePath
+				ctx.Request.URL.Path = ctx.Request.URL.Path + basePath
 			}
 
 			// find with lowercase + or - sash
@@ -385,7 +400,7 @@ END:
 		}
 
 		ctx.params = ctx.params[0:0]
-		ctx.handlers = append(r.lcars.routeGroup.middleware, r.lcars.http404...)
+		ctx.handlers = append(r.lars.routeGroup.middleware, r.lars.http404...)
 	}
 }
 
@@ -394,14 +409,13 @@ func (r *Router) redirect(ctx *Context) {
 
 	code := http.StatusMovedPermanently
 
-	if ctx.request.Method != GET {
+	if ctx.Request.Method != GET {
 		code = http.StatusTemporaryRedirect
 	}
 
 	fn := func(c *Context) {
-		req := c.Request()
-		http.Redirect(c.Response(), req, req.URL.Path, code)
+		http.Redirect(c.Response, c.Request, c.Request.URL.String(), code)
 	}
 
-	ctx.handlers = append(r.lcars.routeGroup.middleware, fn)
+	ctx.handlers = append(r.lars.routeGroup.middleware, fn)
 }

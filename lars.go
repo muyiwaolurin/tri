@@ -1,4 +1,4 @@
-package lcars
+package lars
 
 import (
 	"net/http"
@@ -55,6 +55,7 @@ const (
 	// Headers
 	//---------
 
+	AcceptedLanguage   = "Accept-Language"
 	AcceptEncoding     = "Accept-Encoding"
 	Authorization      = "Authorization"
 	ContentDisposition = "Content-Disposition"
@@ -66,7 +67,9 @@ const (
 	Vary               = "Vary"
 	WWWAuthenticate    = "WWW-Authenticate"
 	XForwardedFor      = "X-Forwarded-For"
-	XRealIP            = "X-Real-IP"
+	XRealIP            = "X-Real-Ip"
+
+	Gzip = "gzip"
 
 	basePath = "/"
 	blank    = ""
@@ -90,8 +93,8 @@ type HandlersChain []HandlerFunc
 // GlobalsFunc is a function that creates a new Global object to be passed around the request
 type GlobalsFunc func() IGlobals
 
-// LCARS is the main routing instance
-type LCARS struct {
+// LARS is the main routing instance
+type LARS struct {
 	routeGroup
 	router *Router
 
@@ -101,6 +104,7 @@ type LCARS struct {
 	mostParams uint8
 
 	newGlobals GlobalsFunc
+	hasGlobals bool
 
 	pool sync.Pool
 
@@ -125,7 +129,7 @@ type LCARS struct {
 
 var (
 	default404Handler = func(c *Context) {
-		http.Error(c.Response(), http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		http.Error(c.Response, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 	}
 
 	methodNotAllowedHandler = func(c *Context) {
@@ -133,7 +137,7 @@ var (
 		m, _ := c.Get("methods")
 		methods := m.(chainMethods)
 
-		res := c.Response()
+		res := c.Response
 
 		for k := range methods {
 			res.Header().Add("Allow", k)
@@ -143,10 +147,10 @@ var (
 	}
 )
 
-// New Creates and returns a new LCARS instance
-func New() *LCARS {
+// New Creates and returns a new lars instance
+func New() *LARS {
 
-	l := &LCARS{
+	l := &LARS{
 		routeGroup: routeGroup{
 			middleware: make(HandlersChain, 0),
 		},
@@ -160,10 +164,10 @@ func New() *LCARS {
 		handleMethodNotAllowed: false,
 	}
 
-	l.routeGroup.lcars = l
-	l.router = NewRouter(l)
+	l.routeGroup.lars = l
+	l.router = newRouter(l)
 	l.pool.New = func() interface{} {
-		return NewContext(l)
+		return newContext(l)
 	}
 
 	return l
@@ -171,13 +175,14 @@ func New() *LCARS {
 
 // RegisterGlobals registers a custom globals function for creation
 // and resetting of a global object passed per http request
-func (l *LCARS) RegisterGlobals(fn GlobalsFunc) {
+func (l *LARS) RegisterGlobals(fn GlobalsFunc) {
 	l.newGlobals = fn
+	l.hasGlobals = true
 }
 
 // Register404 alows for overriding of the not found handler function.
 // NOTE: this is run after not finding a route even after redirecting with the trailing slash
-func (l *LCARS) Register404(notFound ...Handler) {
+func (l *LARS) Register404(notFound ...Handler) {
 
 	chain := make(HandlersChain, len(notFound))
 
@@ -188,36 +193,52 @@ func (l *LCARS) Register404(notFound ...Handler) {
 	l.http404 = chain
 }
 
-// SetRedirectTrailingSlash tells LCARS whether to try
+// SetRedirectTrailingSlash tells lars whether to try
 // and fix a URL by trying to find it
 // lowercase -> with or without slash -> 404
-func (l *LCARS) SetRedirectTrailingSlash(set bool) {
+func (l *LARS) SetRedirectTrailingSlash(set bool) {
 	l.redirectTrailingSlash = set
 }
 
-// SetHandle405MethodNotAllowed tells LCARS whether to
+// SetHandle405MethodNotAllowed tells lars whether to
 // handle the http 405 Method Not Allowed status code
-func (l *LCARS) SetHandle405MethodNotAllowed(set bool) {
+func (l *LARS) SetHandle405MethodNotAllowed(set bool) {
 	l.handleMethodNotAllowed = set
 }
 
 // Serve returns an http.Handler to be used.
-func (l *LCARS) Serve() http.Handler {
+func (l *LARS) Serve() http.Handler {
 
 	// reserved for any logic that needs to happen before serving starts.
 	// i.e. although this router does not use priority to determine route order
 	// could add sorting of tree nodes here....
 
+	if l.hasGlobals {
+		return http.HandlerFunc(l.serveHTTPWithGlobals)
+	}
+
 	return http.HandlerFunc(l.serveHTTP)
 }
 
 // Conforms to the http.Handler interface.
-func (l *LCARS) serveHTTP(w http.ResponseWriter, r *http.Request) {
+func (l *LARS) serveHTTPWithGlobals(w http.ResponseWriter, r *http.Request) {
 	c := l.pool.Get().(*Context)
-	c.Reset(w, r)
 
+	c.reset(w, r)
+	c.Globals.Reset(c)
 	l.router.find(c, true)
+	c.Next()
+	c.Globals.Done()
 
+	l.pool.Put(c)
+}
+
+// Conforms to the http.Handler interface.
+func (l *LARS) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	c := l.pool.Get().(*Context)
+
+	c.reset(w, r)
+	l.router.find(c, true)
 	c.Next()
 
 	l.pool.Put(c)
