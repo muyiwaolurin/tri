@@ -12,8 +12,6 @@ import (
 	. "gopkg.in/go-playground/assert.v1"
 )
 
-// . "gopkg.in/go-playground/assert.v1"
-
 // NOTES:
 // - Run "go test" to run tests
 // - Run "gocov test | gocov report" to report on test converage by file
@@ -25,11 +23,11 @@ import (
 // go test -coverprofile cover.out && go tool cover -html=cover.out -o cover.html
 //
 
-var basicHandler = func(*Context) {}
+var basicHandler = func(Context) {}
 
 func TestFindOneOffs(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	l := New()
@@ -73,14 +71,14 @@ func TestFindOneOffs(t *testing.T) {
 	Equal(t, code, http.StatusMovedPermanently)
 	Equal(t, body, "<a href=\"/zombies/10/\">Moved Permanently</a>.\n\n")
 
-	PanicMatches(t, func() { l.Get("/zombies/:id/") }, "Duplicate Handler for method 'GET' with path '/zombies/:id/'")
+	PanicMatches(t, func() { l.Get("/zombies/:id/", basicHandler) }, "Duplicate Handler for method 'GET' with path '/zombies/:id/'")
 }
 
 func Testlars(t *testing.T) {
 	l := New()
 
-	l.Get("/", func(c *Context) {
-		c.Response.Write([]byte("home"))
+	l.Get("/", func(c Context) {
+		c.Response().Write([]byte("home"))
 	})
 
 	code, body := request(GET, "/", l)
@@ -100,9 +98,9 @@ func TestlarsStatic(t *testing.T) {
 func TestlarsParam(t *testing.T) {
 	l := New()
 	path := "/github.com/go-playground/:id/"
-	l.Get(path, func(c *Context) {
+	l.Get(path, func(c Context) {
 		p := c.Param("id")
-		c.Response.Write([]byte(p))
+		c.Response().Write([]byte(p))
 	})
 	code, body := request(GET, "/github.com/go-playground/808w70/", l)
 
@@ -116,7 +114,7 @@ func TestlarsTwoParam(t *testing.T) {
 
 	l := New()
 	path := "/github.com/user/:id/:age/"
-	l.Get(path, func(c *Context) {
+	l.Get(path, func(c Context) {
 		p1 = c.Param("id")
 		p2 = c.Param("age")
 	})
@@ -135,16 +133,16 @@ func TestRouterMatchAny(t *testing.T) {
 	path2 := "/github/*"
 	path3 := "/users/*"
 
-	l.Get(path1, func(c *Context) {
-		c.Response.Write([]byte(c.Request.URL.Path))
+	l.Get(path1, func(c Context) {
+		c.Response().Write([]byte(c.Request().URL.Path))
 	})
 
-	l.Get(path2, func(c *Context) {
-		c.Response.Write([]byte(c.Request.URL.Path))
+	l.Get(path2, func(c Context) {
+		c.Response().Write([]byte(c.Request().URL.Path))
 	})
 
-	l.Get(path3, func(c *Context) {
-		c.Response.Write([]byte(c.Request.URL.Path))
+	l.Get(path3, func(c Context) {
+		c.Response().Write([]byte(c.Request().URL.Path))
 	})
 
 	code, body := request(GET, "/github/", l)
@@ -162,10 +160,10 @@ func TestRouterMatchAny(t *testing.T) {
 }
 
 func TestRouterMicroParam(t *testing.T) {
-	var context *Context
+	var context Context
 
 	l := New()
-	l.Get("/:a/:b/:c", func(c *Context) {
+	l.Get("/:a/:b/:c", func(c Context) {
 		context = c
 	})
 
@@ -196,8 +194,8 @@ func TestRouterMixParamMatchAny(t *testing.T) {
 	l := New()
 
 	//Route
-	l.Get("/users/:id/*", func(c *Context) {
-		c.Response.Write([]byte(c.Request.URL.Path))
+	l.Get("/users/:id/*", func(c Context) {
+		c.Response().Write([]byte(c.Request().URL.Path))
 		p = c.Param("id")
 	})
 	code, body := request(GET, "/users/joe/comments", l)
@@ -212,7 +210,7 @@ func TestRouterMultiRoute(t *testing.T) {
 
 	l := New()
 	//Route
-	l.Get("/users", func(c *Context) {
+	l.Get("/users", func(c Context) {
 		c.Set("path", "/users")
 		value, ok := c.Get("path")
 		if ok {
@@ -220,7 +218,7 @@ func TestRouterMultiRoute(t *testing.T) {
 		}
 	})
 
-	l.Get("/users/:id", func(c *Context) {
+	l.Get("/users/:id", func(c Context) {
 		parameter = c.Param("id")
 	})
 	// Route > /users
@@ -244,7 +242,7 @@ func TestRouterParamNames(t *testing.T) {
 
 	l := New()
 	//Routes
-	l.Get("/users", func(c *Context) {
+	l.Get("/users", func(c Context) {
 		c.Set("path", "/users")
 		value, ok := c.Get("path")
 		if ok {
@@ -252,11 +250,11 @@ func TestRouterParamNames(t *testing.T) {
 		}
 	})
 
-	l.Get("/users/:id", func(c *Context) {
+	l.Get("/users/:id", func(c Context) {
 		p1 = c.Param("id")
 	})
 
-	l.Get("/users/:id/files/:fid", func(c *Context) {
+	l.Get("/users/:id/files/:fid", func(c Context) {
 		p1 = c.Param("id")
 		p2 = c.Param("fid")
 	})
@@ -282,8 +280,8 @@ func TestRouterAPI(t *testing.T) {
 	l := New()
 
 	for _, route := range githubAPI {
-		l.handle(route.method, route.path, []Handler{func(c *Context) {
-			c.Response.Write([]byte(c.Request.URL.Path))
+		l.handle(route.method, route.path, []Handler{func(c Context) {
+			c.Response().Write([]byte(c.Request().URL.Path))
 		}})
 	}
 
@@ -295,14 +293,14 @@ func TestRouterAPI(t *testing.T) {
 }
 
 func TestUseAndGroup(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	var log string
 
-	logger := func(c *Context) {
-		log = c.Request.URL.Path
+	logger := func(c Context) {
+		log = c.Request().URL.Path
 		c.Next()
 	}
 
@@ -329,8 +327,8 @@ func TestUseAndGroup(t *testing.T) {
 	Equal(t, body, GET)
 	Equal(t, log, "/users/list/")
 
-	logger2 := func(c *Context) {
-		log = c.Request.URL.Path + "2"
+	logger2 := func(c Context) {
+		log = c.Request().URL.Path + "2"
 		c.Next()
 	}
 
@@ -380,8 +378,8 @@ func TestUseAndGroup(t *testing.T) {
 }
 
 func TestBadAdd(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	l := New()
@@ -409,8 +407,8 @@ func TestBadAdd(t *testing.T) {
 }
 
 func TestAddAllMethods(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	l := New()
@@ -468,8 +466,8 @@ func TestAddAllMethods(t *testing.T) {
 }
 
 func TestAddAllMethodsMatch(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	l := New()
@@ -514,8 +512,8 @@ func TestAddAllMethodsMatch(t *testing.T) {
 }
 
 func TestAddAllMethodsAny(t *testing.T) {
-	fn := func(c *Context) {
-		c.Response.Write([]byte(c.Request.Method))
+	fn := func(c Context) {
+		c.Response().Write([]byte(c.Request().Method))
 	}
 
 	l := New()
@@ -572,11 +570,11 @@ func TestHandlerWrapping(t *testing.T) {
 		w.Write([]byte(r.URL.Path))
 	}
 
-	fn := func(c *Context) { c.Response.Write([]byte(c.Request.URL.Path)) }
+	fn := func(c Context) { c.Response().Write([]byte(c.Request().URL.Path)) }
 
 	var hf HandlerFunc
 
-	hf = func(c *Context) { c.Response.Write([]byte(c.Request.URL.Path)) }
+	hf = func(c Context) { c.Response().Write([]byte(c.Request().URL.Path)) }
 
 	l.Get("/built-in-context-handler-func/", hf)
 	l.Get("/built-in-context-func/", fn)
@@ -655,47 +653,122 @@ func TestHandlerWrapping(t *testing.T) {
 	PanicMatches(t, func() { l.Get("/bad-handler/", bad) }, "unknown handler")
 }
 
-type myGlobals struct {
+type myContext struct {
+	*Ctx
 	text string
 }
 
-func (g *myGlobals) Reset(c *Context) {
-	g.text = "URL: " + c.Request.URL.Path
+func (c *myContext) BaseContext() *Ctx {
+	return c.Ctx
 }
 
-func (g *myGlobals) Done() {
-	g.text = ""
+func (c *myContext) Reset(w http.ResponseWriter, r *http.Request) {
+	c.Ctx.Reset(w, r)
+	c.text = "test"
 }
 
-var _ IGlobals = &myGlobals{}
+func (c *myContext) RequestComplete() {
+	c.text = ""
+}
 
-func TestCustomGlobals(t *testing.T) {
+func newCtx(l *LARS) Context {
 
-	var l *LARS
-
-	globals := &myGlobals{}
-
-	fn := func() IGlobals {
-		return globals
+	return &myContext{
+		Ctx: NewContext(l),
 	}
+}
 
-	l = New()
-	l.RegisterGlobals(fn)
+func TestCustomContext(t *testing.T) {
 
-	l.Get("/home/", func(c *Context) {
-		c.Response.Write([]byte(c.Globals.(*myGlobals).text))
+	var ctx *myContext
+
+	l := New()
+	l.RegisterContext(newCtx)
+
+	l.Get("/home/", func(c Context) {
+		ctx = c.(*myContext)
+		c.Response().Write([]byte(ctx.text))
 	})
 
 	code, body := request(GET, "/home/", l)
 	Equal(t, code, http.StatusOK)
-	Equal(t, body, "URL: /home/")
-	Equal(t, globals.text, "")
+	Equal(t, body, "test")
+	Equal(t, ctx.text, "")
+}
+
+func castContext(c Context, handler Handler) {
+	handler.(func(*myContext))(c.(*myContext))
+}
+
+func TestCustomContextWrap(t *testing.T) {
+
+	var ctx *myContext
+
+	l := New()
+	l.RegisterContext(newCtx)
+	l.RegisterCustomHandler(func(*myContext) {}, castContext)
+
+	PanicMatches(t, func() { l.RegisterCustomHandler(func(*myContext) {}, castContext) }, "Custom Type + CustomHandlerFunc already declared: func(*lars.myContext)")
+
+	l.Get("/home/", func(c *myContext) {
+		ctx = c
+		c.Response().Write([]byte(c.text))
+	})
+
+	code, body := request(GET, "/home/", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "test")
+	Equal(t, ctx.text, "")
+
+	l2 := New()
+	l2.Use(func(c Context) {
+		c.(*myContext).text = "first handler"
+		c.Next()
+	})
+	l2.RegisterContext(newCtx)
+	l2.RegisterCustomHandler(func(*myContext) {}, castContext)
+
+	l2.Get("/home/", func(c *myContext) {
+		ctx = c
+		c.Response().Write([]byte(c.text))
+	})
+
+	code, body = request(GET, "/home/", l2)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "first handler")
+	Equal(t, ctx.text, "")
+
+	l3 := New()
+	l3.RegisterContext(newCtx)
+	l3.RegisterCustomHandler(func(*myContext) {}, castContext)
+	l3.Use(func(c Context) {
+		c.(*myContext).text = "first handler"
+		c.Next()
+	})
+	l3.Use(func(c *myContext) {
+		c.text += " - second handler"
+		c.Next()
+	})
+	l3.Use(func(c Context) {
+		c.(*myContext).text += " - third handler"
+		c.Next()
+	})
+
+	l3.Get("/home/", func(c *myContext) {
+		ctx = c
+		c.Response().Write([]byte(c.text))
+	})
+
+	code, body = request(GET, "/home/", l3)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "first handler - second handler - third handler")
+	Equal(t, ctx.text, "")
 }
 
 func TestCustom404(t *testing.T) {
 
-	fn := func(c *Context) {
-		http.Error(c.Response, "My Custom 404 Handler", http.StatusNotFound)
+	fn := func(c Context) {
+		http.Error(c.Response(), "My Custom 404 Handler", http.StatusNotFound)
 	}
 
 	l := New()
@@ -739,6 +812,55 @@ func TestMethodNotAllowed(t *testing.T) {
 
 	code, _ = request(POST, "/home/", l)
 	Equal(t, code, http.StatusNotFound)
+}
+
+var mRoutes = map[string]int{
+	"/":                        0,
+	"/:id":                     1,
+	"/:id/test":                2,
+	"/:id/*":                   2,
+	"/user":                    1,
+	"/user/:id":                2,
+	"/admin/":                  1,
+	"/admin/:id/":              2,
+	"/admin/:id/*":             3,
+	"/assets/*":                2,
+	"/home/user":               2,
+	"/home/user/:id":           3,
+	"/home/user/:id/profile/*": 5,
+}
+
+func TestRouteMap(t *testing.T) {
+	l := New()
+
+	for k := range mRoutes {
+		l.Get(k, basicHandler)
+	}
+
+	routes := l.GetRouteMap()
+	var ok bool
+
+	for _, r := range routes {
+
+		_, ok = mRoutes[r.Path]
+
+		Equal(t, ok, true)
+		Equal(t, r.Depth, mRoutes[r.Path])
+		Equal(t, r.Method, GET)
+		MatchRegex(t, r.Handler, "^(.*/vendor/)?github.com/go-playground/lars.glob.func4$")
+	}
+
+	// next test must be separate, don't know why anyone would do this but it is possible
+	l2 := New()
+	l2.Get("/*", basicHandler)
+
+	routes = l2.GetRouteMap()
+	Equal(t, len(routes), 1)
+	Equal(t, ok, true)
+	Equal(t, routes[0].Path, "/*")
+	Equal(t, routes[0].Depth, 1)
+	Equal(t, routes[0].Method, GET)
+	MatchRegex(t, routes[0].Handler, "^(.*/vendor/)?github.com/go-playground/lars.glob.func4$")
 }
 
 func TestRedirect(t *testing.T) {
@@ -799,9 +921,25 @@ func TestRedirect(t *testing.T) {
 	Equal(t, code, http.StatusNotFound)
 }
 
+type closeNotifyingRecorder struct {
+	*httptest.ResponseRecorder
+	closed chan bool
+}
+
+func (c *closeNotifyingRecorder) close() {
+	c.closed <- true
+}
+
+func (c *closeNotifyingRecorder) CloseNotify() <-chan bool {
+	return c.closed
+}
+
 func request(method, path string, l *LARS) (int, string) {
 	r, _ := http.NewRequest(method, path, nil)
-	w := httptest.NewRecorder()
+	w := &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
 	hf := l.Serve()
 	hf.ServeHTTP(w, r)
 	return w.Code, w.Body.String()
@@ -832,8 +970,10 @@ func requestMultiPart(method string, url string, l *LARS) (int, string) {
 
 	r, _ := http.NewRequest(method, url, body)
 	r.Header.Set(ContentType, writer.FormDataContentType())
-
-	wr := httptest.NewRecorder()
+	wr := &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
 	hf := l.Serve()
 	hf.ServeHTTP(wr, r)
 
@@ -843,267 +983,4 @@ func requestMultiPart(method string, url string, l *LARS) (int, string) {
 type route struct {
 	method string
 	path   string
-}
-
-var githubAPI = []route{
-	// OAuth Authorizations
-	{"GET", "/authorizations"},
-	{"GET", "/authorizations/:id"},
-	{"POST", "/authorizations"},
-	//{"PUT", "/authorizations/clients/:client_id"},
-	//{"PATCH", "/authorizations/:id"},
-	{"DELETE", "/authorizations/:id"},
-	{"GET", "/applications/:client_id/tokens/:access_token"},
-	{"DELETE", "/applications/:client_id/tokens"},
-	{"DELETE", "/applications/:client_id/tokens/:access_token"},
-
-	// Activity
-	{"GET", "/events"},
-	{"GET", "/repos/:owner/:repo/events"},
-	{"GET", "/networks/:owner/:repo/events"},
-	{"GET", "/orgs/:org/events"},
-	{"GET", "/users/:user/received_events"},
-	{"GET", "/users/:user/received_events/public"},
-	{"GET", "/users/:user/events"},
-	{"GET", "/users/:user/events/public"},
-	{"GET", "/users/:user/events/orgs/:org"},
-	{"GET", "/feeds"},
-	{"GET", "/notifications"},
-	{"GET", "/repos/:owner/:repo/notifications"},
-	{"PUT", "/notifications"},
-	{"PUT", "/repos/:owner/:repo/notifications"},
-	{"GET", "/notifications/threads/:id"},
-	//{"PATCH", "/notifications/threads/:id"},
-	{"GET", "/notifications/threads/:id/subscription"},
-	{"PUT", "/notifications/threads/:id/subscription"},
-	{"DELETE", "/notifications/threads/:id/subscription"},
-	{"GET", "/repos/:owner/:repo/stargazers"},
-	{"GET", "/users/:user/starred"},
-	{"GET", "/user/starred"},
-	{"GET", "/user/starred/:owner/:repo"},
-	{"PUT", "/user/starred/:owner/:repo"},
-	{"DELETE", "/user/starred/:owner/:repo"},
-	{"GET", "/repos/:owner/:repo/subscribers"},
-	{"GET", "/users/:user/subscriptions"},
-	{"GET", "/user/subscriptions"},
-	{"GET", "/repos/:owner/:repo/subscription"},
-	{"PUT", "/repos/:owner/:repo/subscription"},
-	{"DELETE", "/repos/:owner/:repo/subscription"},
-	{"GET", "/user/subscriptions/:owner/:repo"},
-	{"PUT", "/user/subscriptions/:owner/:repo"},
-	{"DELETE", "/user/subscriptions/:owner/:repo"},
-
-	// Gists
-	{"GET", "/users/:user/gists"},
-	{"GET", "/gists"},
-	//{"GET", "/gists/public"},
-	//{"GET", "/gists/starred"},
-	{"GET", "/gists/:id"},
-	{"POST", "/gists"},
-	//{"PATCH", "/gists/:id"},
-	{"PUT", "/gists/:id/star"},
-	{"DELETE", "/gists/:id/star"},
-	{"GET", "/gists/:id/star"},
-	{"POST", "/gists/:id/forks"},
-	{"DELETE", "/gists/:id"},
-
-	// Git Data
-	{"GET", "/repos/:owner/:repo/git/blobs/:sha"},
-	{"POST", "/repos/:owner/:repo/git/blobs"},
-	{"GET", "/repos/:owner/:repo/git/commits/:sha"},
-	{"POST", "/repos/:owner/:repo/git/commits"},
-	//{"GET", "/repos/:owner/:repo/git/refs/*ref"},
-	{"GET", "/repos/:owner/:repo/git/refs"},
-	{"POST", "/repos/:owner/:repo/git/refs"},
-	//{"PATCH", "/repos/:owner/:repo/git/refs/*ref"},
-	//{"DELETE", "/repos/:owner/:repo/git/refs/*ref"},
-	{"GET", "/repos/:owner/:repo/git/tags/:sha"},
-	{"POST", "/repos/:owner/:repo/git/tags"},
-	{"GET", "/repos/:owner/:repo/git/trees/:sha"},
-	{"POST", "/repos/:owner/:repo/git/trees"},
-
-	// Issues
-	{"GET", "/issues"},
-	{"GET", "/user/issues"},
-	{"GET", "/orgs/:org/issues"},
-	{"GET", "/repos/:owner/:repo/issues"},
-	{"GET", "/repos/:owner/:repo/issues/:number"},
-	{"POST", "/repos/:owner/:repo/issues"},
-	//{"PATCH", "/repos/:owner/:repo/issues/:number"},
-	{"GET", "/repos/:owner/:repo/assignees"},
-	{"GET", "/repos/:owner/:repo/assignees/:assignee"},
-	{"GET", "/repos/:owner/:repo/issues/:number/comments"},
-	//{"GET", "/repos/:owner/:repo/issues/comments"},
-	//{"GET", "/repos/:owner/:repo/issues/comments/:id"},
-	{"POST", "/repos/:owner/:repo/issues/:number/comments"},
-	//{"PATCH", "/repos/:owner/:repo/issues/comments/:id"},
-	//{"DELETE", "/repos/:owner/:repo/issues/comments/:id"},
-	{"GET", "/repos/:owner/:repo/issues/:number/events"},
-	//{"GET", "/repos/:owner/:repo/issues/events"},
-	//{"GET", "/repos/:owner/:repo/issues/events/:id"},
-	{"GET", "/repos/:owner/:repo/labels"},
-	{"GET", "/repos/:owner/:repo/labels/:name"},
-	{"POST", "/repos/:owner/:repo/labels"},
-	//{"PATCH", "/repos/:owner/:repo/labels/:name"},
-	{"DELETE", "/repos/:owner/:repo/labels/:name"},
-	{"GET", "/repos/:owner/:repo/issues/:number/labels"},
-	{"POST", "/repos/:owner/:repo/issues/:number/labels"},
-	{"DELETE", "/repos/:owner/:repo/issues/:number/labels/:name"},
-	{"PUT", "/repos/:owner/:repo/issues/:number/labels"},
-	{"DELETE", "/repos/:owner/:repo/issues/:number/labels"},
-	{"GET", "/repos/:owner/:repo/milestones/:number/labels"},
-	{"GET", "/repos/:owner/:repo/milestones"},
-	{"GET", "/repos/:owner/:repo/milestones/:number"},
-	{"POST", "/repos/:owner/:repo/milestones"},
-	//{"PATCH", "/repos/:owner/:repo/milestones/:number"},
-	{"DELETE", "/repos/:owner/:repo/milestones/:number"},
-
-	// Miscellaneous
-	{"GET", "/emojis"},
-	{"GET", "/gitignore/templates"},
-	{"GET", "/gitignore/templates/:name"},
-	{"POST", "/markdown"},
-	{"POST", "/markdown/raw"},
-	{"GET", "/meta"},
-	{"GET", "/rate_limit"},
-
-	// Organizations
-	{"GET", "/users/:user/orgs"},
-	{"GET", "/user/orgs"},
-	{"GET", "/orgs/:org"},
-	//{"PATCH", "/orgs/:org"},
-	{"GET", "/orgs/:org/members"},
-	{"GET", "/orgs/:org/members/:user"},
-	{"DELETE", "/orgs/:org/members/:user"},
-	{"GET", "/orgs/:org/public_members"},
-	{"GET", "/orgs/:org/public_members/:user"},
-	{"PUT", "/orgs/:org/public_members/:user"},
-	{"DELETE", "/orgs/:org/public_members/:user"},
-	{"GET", "/orgs/:org/teams"},
-	{"GET", "/teams/:id"},
-	{"POST", "/orgs/:org/teams"},
-	//{"PATCH", "/teams/:id"},
-	{"DELETE", "/teams/:id"},
-	{"GET", "/teams/:id/members"},
-	{"GET", "/teams/:id/members/:user"},
-	{"PUT", "/teams/:id/members/:user"},
-	{"DELETE", "/teams/:id/members/:user"},
-	{"GET", "/teams/:id/repos"},
-	{"GET", "/teams/:id/repos/:owner/:repo"},
-	{"PUT", "/teams/:id/repos/:owner/:repo"},
-	{"DELETE", "/teams/:id/repos/:owner/:repo"},
-	{"GET", "/user/teams"},
-
-	// Pull Requests
-	{"GET", "/repos/:owner/:repo/pulls"},
-	{"GET", "/repos/:owner/:repo/pulls/:number"},
-	{"POST", "/repos/:owner/:repo/pulls"},
-	//{"PATCH", "/repos/:owner/:repo/pulls/:number"},
-	{"GET", "/repos/:owner/:repo/pulls/:number/commits"},
-	{"GET", "/repos/:owner/:repo/pulls/:number/files"},
-	{"GET", "/repos/:owner/:repo/pulls/:number/merge"},
-	{"PUT", "/repos/:owner/:repo/pulls/:number/merge"},
-	{"GET", "/repos/:owner/:repo/pulls/:number/comments"},
-	//{"GET", "/repos/:owner/:repo/pulls/comments"},
-	//{"GET", "/repos/:owner/:repo/pulls/comments/:number"},
-	{"PUT", "/repos/:owner/:repo/pulls/:number/comments"},
-	//{"PATCH", "/repos/:owner/:repo/pulls/comments/:number"},
-	//{"DELETE", "/repos/:owner/:repo/pulls/comments/:number"},
-
-	// Repositories
-	{"GET", "/user/repos"},
-	{"GET", "/users/:user/repos"},
-	{"GET", "/orgs/:org/repos"},
-	{"GET", "/repositories"},
-	{"POST", "/user/repos"},
-	{"POST", "/orgs/:org/repos"},
-	{"GET", "/repos/:owner/:repo"},
-	//{"PATCH", "/repos/:owner/:repo"},
-	{"GET", "/repos/:owner/:repo/contributors"},
-	{"GET", "/repos/:owner/:repo/languages"},
-	{"GET", "/repos/:owner/:repo/teams"},
-	{"GET", "/repos/:owner/:repo/tags"},
-	{"GET", "/repos/:owner/:repo/branches"},
-	{"GET", "/repos/:owner/:repo/branches/:branch"},
-	{"DELETE", "/repos/:owner/:repo"},
-	{"GET", "/repos/:owner/:repo/collaborators"},
-	{"GET", "/repos/:owner/:repo/collaborators/:user"},
-	{"PUT", "/repos/:owner/:repo/collaborators/:user"},
-	{"DELETE", "/repos/:owner/:repo/collaborators/:user"},
-	{"GET", "/repos/:owner/:repo/comments"},
-	{"GET", "/repos/:owner/:repo/commits/:sha/comments"},
-	{"POST", "/repos/:owner/:repo/commits/:sha/comments"},
-	{"GET", "/repos/:owner/:repo/comments/:id"},
-	//{"PATCH", "/repos/:owner/:repo/comments/:id"},
-	{"DELETE", "/repos/:owner/:repo/comments/:id"},
-	{"GET", "/repos/:owner/:repo/commits"},
-	{"GET", "/repos/:owner/:repo/commits/:sha"},
-	{"GET", "/repos/:owner/:repo/readme"},
-	//{"GET", "/repos/:owner/:repo/contents/*path"},
-	//{"PUT", "/repos/:owner/:repo/contents/*path"},
-	//{"DELETE", "/repos/:owner/:repo/contents/*path"},
-	//{"GET", "/repos/:owner/:repo/:archive_format/:ref"},
-	{"GET", "/repos/:owner/:repo/keys"},
-	{"GET", "/repos/:owner/:repo/keys/:id"},
-	{"POST", "/repos/:owner/:repo/keys"},
-	//{"PATCH", "/repos/:owner/:repo/keys/:id"},
-	{"DELETE", "/repos/:owner/:repo/keys/:id"},
-	{"GET", "/repos/:owner/:repo/downloads"},
-	{"GET", "/repos/:owner/:repo/downloads/:id"},
-	{"DELETE", "/repos/:owner/:repo/downloads/:id"},
-	{"GET", "/repos/:owner/:repo/forks"},
-	{"POST", "/repos/:owner/:repo/forks"},
-	{"GET", "/repos/:owner/:repo/hooks"},
-	{"GET", "/repos/:owner/:repo/hooks/:id"},
-	{"POST", "/repos/:owner/:repo/hooks"},
-	//{"PATCH", "/repos/:owner/:repo/hooks/:id"},
-	{"POST", "/repos/:owner/:repo/hooks/:id/tests"},
-	{"DELETE", "/repos/:owner/:repo/hooks/:id"},
-	{"POST", "/repos/:owner/:repo/merges"},
-	{"GET", "/repos/:owner/:repo/releases"},
-	{"GET", "/repos/:owner/:repo/releases/:id"},
-	{"POST", "/repos/:owner/:repo/releases"},
-	//{"PATCH", "/repos/:owner/:repo/releases/:id"},
-	{"DELETE", "/repos/:owner/:repo/releases/:id"},
-	{"GET", "/repos/:owner/:repo/releases/:id/assets"},
-	{"GET", "/repos/:owner/:repo/stats/contributors"},
-	{"GET", "/repos/:owner/:repo/stats/commit_activity"},
-	{"GET", "/repos/:owner/:repo/stats/code_frequency"},
-	{"GET", "/repos/:owner/:repo/stats/participation"},
-	{"GET", "/repos/:owner/:repo/stats/punch_card"},
-	{"GET", "/repos/:owner/:repo/statuses/:ref"},
-	{"POST", "/repos/:owner/:repo/statuses/:ref"},
-
-	// Search
-	{"GET", "/search/repositories"},
-	{"GET", "/search/code"},
-	{"GET", "/search/issues"},
-	{"GET", "/search/users"},
-	{"GET", "/legacy/issues/search/:owner/:repository/:state/:keyword"},
-	{"GET", "/legacy/repos/search/:keyword"},
-	{"GET", "/legacy/user/search/:keyword"},
-	{"GET", "/legacy/user/email/:email"},
-
-	// Users
-	{"GET", "/users/:user"},
-	{"GET", "/user"},
-	//{"PATCH", "/user"},
-	{"GET", "/users"},
-	{"GET", "/user/emails"},
-	{"POST", "/user/emails"},
-	{"DELETE", "/user/emails"},
-	{"GET", "/users/:user/followers"},
-	{"GET", "/user/followers"},
-	{"GET", "/users/:user/following"},
-	{"GET", "/user/following"},
-	{"GET", "/user/following/:user"},
-	{"GET", "/users/:user/following/:target_user"},
-	{"PUT", "/user/following/:user"},
-	{"DELETE", "/user/following/:user"},
-	{"GET", "/users/:user/keys"},
-	{"GET", "/user/keys"},
-	{"GET", "/user/keys/:id"},
-	{"POST", "/user/keys"},
-	//{"PATCH", "/user/keys/:id"},
-	{"DELETE", "/user/keys/:id"},
 }

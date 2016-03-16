@@ -1,8 +1,10 @@
 package lars
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	. "gopkg.in/go-playground/assert.v1"
@@ -19,12 +21,74 @@ import (
 // go test -coverprofile cover.out && go tool cover -html=cover.out -o cover.html
 //
 
+func TestStream(t *testing.T) {
+	l := New()
+
+	count := 0
+
+	l.Get("/stream/:id", func(c Context) {
+		c.Stream(func(w io.Writer) bool {
+
+			w.Write([]byte("a"))
+			count++
+
+			if count == 13 {
+				return false
+			}
+
+			return true
+		})
+	})
+
+	l.Get("/stream2/:id", func(c Context) {
+		c.Stream(func(w io.Writer) bool {
+
+			w.Write([]byte("a"))
+			count++
+
+			if count == 5 {
+				c.Response().Writer().(*closeNotifyingRecorder).close()
+			}
+
+			if count == 1000 {
+				return false
+			}
+
+			return true
+		})
+	})
+
+	code, body := request(GET, "/stream/13", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "aaaaaaaaaaaaa")
+
+	count = 0
+
+	code, body = request(GET, "/stream2/13", l)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "aaaaa")
+
+}
+
+func HandlerForName(c Context) {
+	c.Response().Write([]byte(c.HandlerName()))
+}
+
+func TestHandlerName(t *testing.T) {
+	l := New()
+	l.Get("/users/:id", HandlerForName)
+
+	code, body := request(GET, "/users/13", l)
+	Equal(t, code, http.StatusOK)
+	MatchRegex(t, body, "^(.*/vendor/)?github.com/go-playground/lars.HandlerForName$")
+}
+
 func TestContext(t *testing.T) {
 
 	l := New()
 	r, _ := http.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	c := newContext(l)
+	c := NewContext(l)
 
 	var varParams []Param
 
@@ -44,13 +108,13 @@ func TestContext(t *testing.T) {
 
 	c.params = varParams
 	c.store = storeMap
-	c.Request = r
+	c.request = r
 
 	//Request
-	NotEqual(t, c.Request, nil)
+	NotEqual(t, c.request, nil)
 
 	//Response
-	NotEqual(t, c.Response, nil)
+	NotEqual(t, c.response, nil)
 
 	//Paramter by name
 	bsonValue := c.Param("userID")
@@ -84,13 +148,13 @@ func TestContext(t *testing.T) {
 	Equal(t, "-74.005941", vString[3])
 
 	// Reset
-	c.reset(w, r)
+	c.Reset(w, r)
 
 	//Request
-	NotEqual(t, c.Request, nil)
+	NotEqual(t, c.request, nil)
 
 	//Response
-	NotEqual(t, c.Response, nil)
+	NotEqual(t, c.response, nil)
 
 	//Set
 	Equal(t, c.store, nil)
@@ -100,14 +164,13 @@ func TestContext(t *testing.T) {
 
 	// Handlers
 	Equal(t, c.handlers, nil)
-
 }
 
 func TestQueryParams(t *testing.T) {
 	l := New()
-	l.Get("/home/:id", func(c *Context) {
+	l.Get("/home/:id", func(c Context) {
 		c.Param("nonexistant")
-		c.Response.Write([]byte(c.Request.URL.RawQuery))
+		c.Response().Write([]byte(c.Request().URL.RawQuery))
 	})
 
 	code, body := request(GET, "/home/13?test=true&test2=true", l)
@@ -118,7 +181,7 @@ func TestQueryParams(t *testing.T) {
 func TestNativeHandlersAndParseForm(t *testing.T) {
 
 	l := New()
-	l.Use(func(c *Context) {
+	l.Use(func(c Context) {
 		// to trigger the form parsing
 		c.Param("nonexistant")
 		c.Next()
@@ -133,7 +196,7 @@ func TestNativeHandlersAndParseForm(t *testing.T) {
 	Equal(t, body, "")
 
 	l2 := New()
-	l2.Use(func(c *Context) {
+	l2.Use(func(c Context) {
 		// to trigger the form parsing
 		c.ParseForm()
 		c.Next()
@@ -161,7 +224,7 @@ func TestNativeHandlersAndParseForm(t *testing.T) {
 	Equal(t, body, "15")
 
 	l4 := New()
-	l4.Use(func(c *Context) {
+	l4.Use(func(c Context) {
 		// to trigger the form parsing
 		c.ParseForm()
 		c.Next()
@@ -194,12 +257,26 @@ func TestNativeHandlersAndParseForm(t *testing.T) {
 	code, body = request(GET, "/users/16?test=%2f%%efg", l5)
 	Equal(t, code, http.StatusOK)
 	Equal(t, body, "invalid URL escape \"%%e\"")
+
+	l6 := New()
+	l6.Get("/chain-handler", func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("a"))
+			handler.ServeHTTP(w, r)
+		})
+	}, func(c Context) {
+		c.Response().Write([]byte("ok"))
+	})
+
+	code, body = request(GET, "/chain-handler", l6)
+	Equal(t, code, http.StatusOK)
+	Equal(t, body, "aok")
 }
 
 func TestNativeHandlersAndParseMultiPartForm(t *testing.T) {
 
 	l := New()
-	l.Use(func(c *Context) {
+	l.Use(func(c Context) {
 		// to trigger the form parsing
 		c.Param("nonexistant")
 		c.Next()
@@ -214,7 +291,7 @@ func TestNativeHandlersAndParseMultiPartForm(t *testing.T) {
 	Equal(t, body, "")
 
 	l2 := New()
-	l2.Use(func(c *Context) {
+	l2.Use(func(c Context) {
 		// to trigger the form parsing
 		c.ParseMultipartForm(10 << 5) // 5 MB
 		c.Next()
@@ -241,7 +318,7 @@ func TestNativeHandlersAndParseMultiPartForm(t *testing.T) {
 	Equal(t, body, "15")
 
 	l4 := New()
-	l4.Use(func(c *Context) {
+	l4.Use(func(c Context) {
 		// to trigger the form parsing
 		c.ParseMultipartForm(10 << 5) // 5 MB
 		c.Next()
@@ -278,47 +355,135 @@ func TestNativeHandlersAndParseMultiPartForm(t *testing.T) {
 
 func TestClientIP(t *testing.T) {
 	l := New()
-	c := newContext(l)
+	c := NewContext(l)
 
-	c.Request, _ = http.NewRequest("POST", "/", nil)
+	c.request, _ = http.NewRequest("POST", "/", nil)
 
-	c.Request.Header.Set("X-Real-IP", " 10.10.10.10  ")
-	c.Request.Header.Set("X-Forwarded-For", "  20.20.20.20, 30.30.30.30")
-	c.Request.RemoteAddr = "  40.40.40.40:42123 "
+	c.Request().Header.Set("X-Real-IP", " 10.10.10.10  ")
+	c.Request().Header.Set("X-Forwarded-For", "  20.20.20.20, 30.30.30.30")
+	c.Request().RemoteAddr = "  40.40.40.40:42123 "
 
 	Equal(t, c.ClientIP(), "10.10.10.10")
 
-	c.Request.Header.Del("X-Real-IP")
+	c.Request().Header.Del("X-Real-IP")
 	Equal(t, c.ClientIP(), "20.20.20.20")
 
-	c.Request.Header.Set("X-Forwarded-For", "30.30.30.30  ")
+	c.Request().Header.Set("X-Forwarded-For", "30.30.30.30  ")
 	Equal(t, c.ClientIP(), "30.30.30.30")
 
-	c.Request.Header.Del("X-Forwarded-For")
+	c.Request().Header.Del("X-Forwarded-For")
 	Equal(t, c.ClientIP(), "40.40.40.40")
+}
+
+func TestAttachment(t *testing.T) {
+
+	l := New()
+
+	l.Get("/dl", func(c Context) {
+		f, _ := os.Open("logo.png")
+		c.Attachment(f, "logo.png")
+	})
+
+	l.Get("/dl-unknown-type", func(c Context) {
+		f, _ := os.Open("logo.png")
+		c.Attachment(f, "logo")
+	})
+
+	r, _ := http.NewRequest(GET, "/dl", nil)
+	w := &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
+	hf := l.Serve()
+	hf.ServeHTTP(w, r)
+
+	Equal(t, w.Code, http.StatusOK)
+	Equal(t, w.Header().Get(ContentDisposition), "attachment;filename=logo.png")
+	Equal(t, w.Header().Get(ContentType), "image/png")
+	Equal(t, w.Body.Len(), 3041)
+
+	r, _ = http.NewRequest(GET, "/dl-unknown-type", nil)
+	w = &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
+	hf = l.Serve()
+	hf.ServeHTTP(w, r)
+
+	Equal(t, w.Code, http.StatusOK)
+	Equal(t, w.Header().Get(ContentDisposition), "attachment;filename=logo")
+	Equal(t, w.Header().Get(ContentType), "application/octet-stream")
+	Equal(t, w.Body.Len(), 3041)
+}
+
+func TestInline(t *testing.T) {
+
+	l := New()
+
+	l.Get("/dl", func(c Context) {
+		f, _ := os.Open("logo.png")
+		c.Inline(f, "logo.png")
+	})
+
+	l.Get("/dl-unknown-type", func(c Context) {
+		f, _ := os.Open("logo.png")
+		c.Inline(f, "logo")
+	})
+
+	r, _ := http.NewRequest(GET, "/dl", nil)
+	w := &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
+	hf := l.Serve()
+	hf.ServeHTTP(w, r)
+
+	Equal(t, w.Code, http.StatusOK)
+	Equal(t, w.Header().Get(ContentDisposition), "inline;filename=logo.png")
+	Equal(t, w.Header().Get(ContentType), "image/png")
+	Equal(t, w.Body.Len(), 3041)
+
+	r, _ = http.NewRequest(GET, "/dl-unknown-type", nil)
+	w = &closeNotifyingRecorder{
+		httptest.NewRecorder(),
+		make(chan bool, 1),
+	}
+	hf = l.Serve()
+	hf.ServeHTTP(w, r)
+
+	Equal(t, w.Code, http.StatusOK)
+	Equal(t, w.Header().Get(ContentDisposition), "inline;filename=logo")
+	Equal(t, w.Header().Get(ContentType), "application/octet-stream")
+	Equal(t, w.Body.Len(), 3041)
 }
 
 func TestAcceptedLanguages(t *testing.T) {
 	l := New()
-	c := newContext(l)
+	c := NewContext(l)
 
-	c.Request, _ = http.NewRequest("POST", "/", nil)
-	c.Request.Header.Set(AcceptedLanguage, "da, en-gb;q=0.8, en;q=0.7")
+	c.request, _ = http.NewRequest("POST", "/", nil)
+	c.Request().Header.Set(AcceptedLanguage, "da, en-GB;q=0.8, en;q=0.7")
 
-	languages := c.AcceptedLanguages()
+	languages := c.AcceptedLanguages(false)
+
+	Equal(t, languages[0], "da")
+	Equal(t, languages[1], "en-GB")
+	Equal(t, languages[2], "en")
+
+	languages = c.AcceptedLanguages(true)
 
 	Equal(t, languages[0], "da")
 	Equal(t, languages[1], "en-gb")
 	Equal(t, languages[2], "en")
 
-	c.Request.Header.Del(AcceptedLanguage)
+	c.Request().Header.Del(AcceptedLanguage)
 
-	languages = c.AcceptedLanguages()
+	languages = c.AcceptedLanguages(false)
 
-	Equal(t, languages, nil)
+	Equal(t, languages, []string{})
 
-	c.Request.Header.Set(AcceptedLanguage, "")
-	languages = c.AcceptedLanguages()
+	c.Request().Header.Set(AcceptedLanguage, "")
+	languages = c.AcceptedLanguages(false)
 
-	Equal(t, languages, nil)
+	Equal(t, languages, []string{})
 }

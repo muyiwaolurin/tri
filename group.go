@@ -1,5 +1,11 @@
 package lars
 
+import (
+	"net/http"
+
+	"golang.org/x/net/websocket"
+)
+
 // IRouteGroup interface for router group
 type IRouteGroup interface {
 	IRoutes
@@ -19,6 +25,7 @@ type IRoutes interface {
 	Head(string, ...Handler)
 	Connect(string, ...Handler)
 	Trace(string, ...Handler)
+	WebSocket(string, Handler)
 }
 
 // routeGroup struct containing all fields and methods for use.
@@ -33,18 +40,24 @@ var _ IRouteGroup = &routeGroup{}
 func (g *routeGroup) handle(method string, path string, handlers []Handler) {
 
 	chain := make(HandlersChain, len(handlers))
+	name := ""
 
 	for i, h := range handlers {
-		chain[i] = wrapHandler(h)
+
+		if i == len(handlers)-1 {
+			chain[i], name = g.lars.wrapHandlerWithName(h)
+		} else {
+			chain[i] = g.lars.wrapHandler(h)
+		}
 	}
 
-	g.lars.router.add(method, g.prefix+path, g, chain)
+	g.lars.router.add(method, g.prefix+path, g, chain, name)
 }
 
 // Use adds a middleware handler to the group middleware chain.
 func (g *routeGroup) Use(m ...Handler) {
 	for _, h := range m {
-		g.middleware = append(g.middleware, wrapHandler(h))
+		g.middleware = append(g.middleware, g.lars.wrapHandler(h))
 	}
 }
 
@@ -111,6 +124,26 @@ func (g *routeGroup) Match(methods []string, path string, h ...Handler) {
 	for _, m := range methods {
 		g.handle(m, path, h)
 	}
+}
+
+// WebSocket adds a websocket route
+func (g *routeGroup) WebSocket(path string, h Handler) {
+
+	handler := g.lars.wrapHandler(h)
+	g.Get(path, func(c Context) {
+
+		ctx := c.BaseContext()
+
+		wss := websocket.Server{
+			Handler: func(ws *websocket.Conn) {
+				ctx.websocket = ws
+				ctx.response.status = http.StatusSwitchingProtocols
+				ctx.Next()
+			},
+		}
+
+		wss.ServeHTTP(ctx.response, ctx.request)
+	}, handler)
 }
 
 // Group creates a new sub router with prefix. It inherits all properties from

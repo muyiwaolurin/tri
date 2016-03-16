@@ -3,6 +3,7 @@ package lars
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -24,10 +25,19 @@ func newRouter(l *LARS) *Router {
 }
 
 // Add parses a route and adds it to the tree
-func (r *Router) add(method string, path string, rg *routeGroup, h HandlersChain) {
+func (r *Router) add(method string, path string, rg *routeGroup, h HandlersChain, handlerName string) {
+
+	if len(h) == 0 {
+		panic("No handler mapped to path:" + path)
+	}
+
+	if i := strings.Index(path, "//"); i != -1 {
+		panic("Bad path '" + path + "' contains duplicate // at index:" + strconv.Itoa(i))
+	}
 
 	origPath := path
 	cn := r.tree
+	existingParams := map[string]struct{}{}
 
 	var (
 		start      int
@@ -63,7 +73,7 @@ MAIN:
 			chunk = path[start:j]
 
 			// check for existing node
-			if en, ok = cn.static[chunk]; ok {
+			if en = cn.static[chunk]; en != nil {
 				cn = en
 				start = j
 
@@ -75,7 +85,8 @@ MAIN:
 				cn.static = nodes{}
 			}
 
-			nn := &node{}
+			nn := new(node)
+
 			cn.static[chunk] = nn
 			cn = nn
 			start = j
@@ -95,6 +106,10 @@ MAIN:
 
 				chunk = path[start:end]
 
+				if _, ok = existingParams[chunk]; ok {
+					panic("Duplicate param name '" + chunk + "' detected for route '" + origPath + "'")
+				}
+
 				// existing param node?
 				if cn.params != nil {
 
@@ -105,6 +120,8 @@ MAIN:
 					if cn.params.param != chunk {
 						panic("Different param names defined for path '" + origPath + "', param '" + chunk + "'' should be '" + cn.params.param + "'")
 					}
+
+					existingParams[chunk] = struct{}{}
 
 					pCount++
 					cn = cn.params
@@ -120,10 +137,12 @@ MAIN:
 
 				// wild already exists! then will conflict
 				if cn.wild != nil {
-					if _, ok := cn.wild.chains[method]; ok {
+					if c, _ := cn.wild.chains.find(method); c != nil {
 						panic("Cannot add url param '" + chunk + "' for path '" + origPath + "', a conflicting wildcard path exists")
 					}
 				}
+
+				existingParams[chunk] = struct{}{}
 
 				nn := &node{
 					param: chunk,
@@ -147,11 +166,16 @@ MAIN:
 			pCount++
 			chunk = path[start:]
 
+			if _, ok = existingParams[chunk]; ok {
+				panic("Duplicate param name '" + chunk + "' detected for route '" + origPath + "'")
+			}
+
 			if cn.params != nil {
 				if cn.params.param != chunk {
 					panic("Different param names defined for path '" + origPath + "', param '" + chunk + "'' should be '" + cn.params.param + "'")
 				}
 
+				existingParams[chunk] = struct{}{}
 				cn = cn.params
 
 				goto END
@@ -159,10 +183,12 @@ MAIN:
 
 			// wild already exists! then will conflict
 			if cn.wild != nil {
-				if _, ok := cn.wild.chains[method]; ok {
+				if c, _ := cn.wild.chains.find(method); c != nil {
 					panic("Cannot add url param '" + chunk + "' for path '" + origPath + "', a conflicting wildcard path exists")
 				}
 			}
+
+			existingParams[chunk] = struct{}{}
 
 			cn.params = &node{
 				param: chunk,
@@ -179,20 +205,20 @@ MAIN:
 			}
 
 			//Check the node for existing star then throw a panic information
-			//if any
 			if cn.wild != nil {
 				panic("Wildcard already set by another path, current path '" + origPath + "' conflicts")
 			}
 
 			// param already exists! then will conflict
 			if cn.params != nil {
-				if _, ok := cn.params.chains[method]; ok {
+				if c, _ := cn.params.chains.find(method); c != nil {
 					panic("Cannot add wildcard for path '" + origPath + "', a conflicting param path exists with param '" + cn.params.param + "'")
 				}
 			}
 
 			cn.wild = &node{}
 			cn = cn.wild
+			pCount++
 
 			goto END
 		}
@@ -205,7 +231,7 @@ MAIN:
 		goto END
 	}
 
-	if en, ok = cn.static[chunk]; ok {
+	if en = cn.static[chunk]; en != nil {
 		cn = en
 		goto END
 	}
@@ -214,7 +240,7 @@ MAIN:
 		cn.static = nodes{}
 	}
 
-	cn.static[chunk] = &node{}
+	cn.static[chunk] = new(node)
 	cn = cn.static[chunk]
 
 END:
@@ -223,29 +249,37 @@ END:
 		r.lars.mostParams = pCount
 	}
 
+	hndlrs := make(HandlersChain, len(rg.middleware)+len(h))
+	copy(hndlrs, rg.middleware)
+	copy(hndlrs[len(rg.middleware):], h)
+
 	if paramSlash {
-		cn.addSlashChain(origPath, method, append(rg.middleware, h...))
+		cn.addSlashChain(origPath, method, hndlrs, handlerName)
 		return
 	}
 
-	cn.addChain(origPath, method, append(rg.middleware, h...))
+	cn.addChain(origPath, method, hndlrs, handlerName)
 }
 
 // Find attempts to match a given use to a mapped route
 // attempting redirect if specified to do so.
-func (r *Router) find(ctx *Context, processEnd bool) {
+func (r *Router) find(ctx *Ctx, processEnd bool) {
 
 	var (
 		start int
 		end   int
 		nn    *node
-		ok    bool
 		i     int
 		j     int
 	)
 
 	cn := r.tree
-	path := ctx.Request.URL.Path[1:]
+	path := ctx.request.URL.Path[1:]
+
+	if len(path) == j {
+		ctx.handlers, ctx.handlerName = cn.chains.find(ctx.request.Method)
+		goto END
+	}
 
 	// start parsing URL
 	for ; end < len(path); end++ {
@@ -256,10 +290,10 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 
 		j = end + 1
 
-		if nn, ok = cn.static[path[start:j]]; ok {
+		if nn = cn.static[path[start:j]]; nn != nil {
 
-			if path[j:] == blank {
-				if ctx.handlers, ok = nn.chains[ctx.Request.Method]; !ok {
+			if j == len(path) {
+				if ctx.handlers, ctx.handlerName = nn.chains.find(ctx.request.Method); ctx.handlers == nil {
 					goto PARAMS
 				}
 
@@ -278,8 +312,8 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 		// no matching static chunk look at params if available
 		if cn.params != nil {
 
-			if path[j:] == blank {
-				if ctx.handlers, ok = cn.params.parmsSlashChains[ctx.Request.Method]; !ok {
+			if j == len(path) {
+				if ctx.handlers, ctx.handlerName = cn.params.parmsSlashChains.find(ctx.request.Method); ctx.handlers == nil {
 					goto WILD
 				}
 
@@ -306,8 +340,12 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 	WILD:
 		// no matching static or param chunk look at wild if available
 		if cn.wild != nil {
-			ctx.handlers = cn.wild.chains[ctx.Request.Method]
+			ctx.handlers, ctx.handlerName = cn.wild.chains.find(ctx.request.Method)
 			cn = cn.wild
+			i = len(ctx.params)
+			ctx.params = ctx.params[:i+1]
+			ctx.params[i].Key = WildcardParam
+			ctx.params[i].Value = path[start:j]
 			goto END
 		}
 
@@ -317,11 +355,11 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 	}
 
 	// no slash encountered, end of path...
-	if nn, ok = cn.static[path[start:]]; ok {
-		if ctx.handlers, ok = nn.chains[ctx.Request.Method]; !ok {
+	if nn = cn.static[path[start:]]; nn != nil {
+		if ctx.handlers, ctx.handlerName = nn.chains.find(ctx.request.Method); ctx.handlers == nil {
 			goto PARAMSNOSLASH
 		}
-		// ctx.handlers = nn.chains[ctx.Request.Method]
+
 		cn = nn
 
 		goto END
@@ -329,7 +367,8 @@ func (r *Router) find(ctx *Context, processEnd bool) {
 
 PARAMSNOSLASH:
 	if cn.params != nil {
-		if ctx.handlers, ok = cn.params.chains[ctx.Request.Method]; !ok {
+
+		if ctx.handlers, ctx.handlerName = cn.params.chains.find(ctx.request.Method); ctx.handlers == nil {
 			goto WILDNOSLASH
 		}
 
@@ -345,14 +384,14 @@ PARAMSNOSLASH:
 WILDNOSLASH:
 	// no matching chunk nor param check if wild
 	if cn.wild != nil {
-		ctx.handlers = cn.wild.chains[ctx.Request.Method]
+		ctx.handlers, ctx.handlerName = cn.wild.chains.find(ctx.request.Method)
 		cn = cn.wild
+		i = len(ctx.params)
+		ctx.params = ctx.params[:i+1]
+		ctx.params[i].Key = WildcardParam
+		ctx.params[i].Value = path[start:]
 
 		goto END
-	}
-
-	if path == blank {
-		ctx.handlers = cn.chains[ctx.Request.Method]
 	}
 
 	cn = nil
@@ -370,11 +409,11 @@ END:
 		if r.lars.redirectTrailingSlash {
 
 			// find again all lowercase
-			lc := strings.ToLower(ctx.Request.URL.Path)
+			lc := strings.ToLower(ctx.request.URL.Path)
 
-			if lc != ctx.Request.URL.Path {
+			if lc != ctx.request.URL.Path {
 
-				ctx.Request.URL.Path = lc
+				ctx.request.URL.Path = lc
 				r.find(ctx, false)
 
 				if ctx.handlers != nil {
@@ -385,10 +424,10 @@ END:
 
 			ctx.params = ctx.params[0:0]
 
-			if ctx.Request.URL.Path[len(ctx.Request.URL.Path)-1:] == basePath {
-				ctx.Request.URL.Path = ctx.Request.URL.Path[:len(ctx.Request.URL.Path)-1]
+			if ctx.request.URL.Path[len(ctx.request.URL.Path)-1:] == basePath {
+				ctx.request.URL.Path = ctx.request.URL.Path[:len(ctx.request.URL.Path)-1]
 			} else {
-				ctx.Request.URL.Path = ctx.Request.URL.Path + basePath
+				ctx.request.URL.Path = ctx.request.URL.Path + basePath
 			}
 
 			// find with lowercase + or - sash
@@ -399,23 +438,27 @@ END:
 			}
 		}
 
-		ctx.params = ctx.params[0:0]
-		ctx.handlers = append(r.lars.routeGroup.middleware, r.lars.http404...)
+		ctx.handlers = r.lars.notFound
 	}
 }
 
 // Redirect redirects the current request
-func (r *Router) redirect(ctx *Context) {
+func (r *Router) redirect(ctx *Ctx) {
 
 	code := http.StatusMovedPermanently
 
-	if ctx.Request.Method != GET {
+	if ctx.request.Method != GET {
 		code = http.StatusTemporaryRedirect
 	}
 
-	fn := func(c *Context) {
-		http.Redirect(c.Response, c.Request, c.Request.URL.String(), code)
+	fn := func(c Context) {
+		inCtx := c.BaseContext()
+		http.Redirect(inCtx.response, inCtx.request, inCtx.request.URL.String(), code)
 	}
 
-	ctx.handlers = append(r.lars.routeGroup.middleware, fn)
+	hndlrs := make(HandlersChain, len(r.lars.routeGroup.middleware)+1)
+	copy(hndlrs, r.lars.routeGroup.middleware)
+	hndlrs[len(r.lars.routeGroup.middleware)] = fn
+
+	ctx.handlers = hndlrs
 }
